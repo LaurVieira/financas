@@ -1,18 +1,19 @@
 # Minhas Finanças
 
-A personal finance app built with HTML, CSS and vanilla JavaScript, for my own use. It tracks salary, fixed expenses and CDB investments, shows how much is left each month, and syncs across my computer and iPhone as an installable app (PWA).
+A personal finance app built with HTML, CSS and vanilla JavaScript, for my own use. It tracks salary, extra income, monthly expenses (fixed, variable and installments) and CDB investments, month by month, and syncs across my computer and iPhone as an installable app (PWA).
 
 **Live app:** https://laurvieira.github.io/financas/
 
 ## Features
 
-- **Summary:** monthly leftover (income minus fixed expenses), share of income already committed, fixed expenses by category and the next due dates.
-- **Income:** net salary, payday and extra income sources.
-- **Fixed expenses:** name, amount, category and due day, with totals.
-- **CDB investments:** amount, application date, rate (% of CDI or fixed annual rate) and optional maturity. Estimates gross yield, regressive income tax and net value up to today.
-- **Sync:** email and password login, with data saved in the cloud and identical on every device.
-- **Offline support:** the app opens without internet and syncs again when the connection returns.
-- **Installable:** works as a standalone app on desktop (Chrome, Edge, Chromium) and on iPhone (Safari).
+- **Month navigation:** browse every month with the arrows. The back arrow stops at the month the app started, and the "Hoje" button returns to the current month.
+- **Summary:** monthly leftover (income minus expenses), share of income already used, paid and remaining amounts, expenses by category, what is left to pay and the CDB totals.
+- **Salary history:** a salary change applies from the chosen month onward and never alters previous months. Deleting the salary follows the same rule.
+- **Extra income:** the "Outras" category counts only in the month it was received, and "Por período" counts in every month between a start and an end date.
+- **Expenses:** name, amount, category, payment method (debit, Pix or boleto, or card) and due date. The **Fixo** type repeats every month, **Variável** counts only in the month it was added, and **Parcelado** shows the current installment (such as 3/10) and stops after the last one.
+- **Paid tracking:** mark each expense as paid, independently for every month.
+- **CDB investments:** amount, date, rate (% of CDI or fixed annual rate) and optional maturity. Shows gross value, gross yield, estimated income tax (regressive table) and net value, calculated up to today or up to the last day of the chosen month.
+- **Sync and offline:** email and password login, cloud storage, and offline use that syncs again when the connection returns.
 - **Backup:** download all data as a `.json` file.
 - **Dark mode:** follows the system theme automatically.
 
@@ -20,7 +21,7 @@ A personal finance app built with HTML, CSS and vanilla JavaScript, for my own u
 
 - **HTML5:** single-page structure with a web app manifest.
 - **CSS3:** native custom properties for light and dark themes, with Flexbox and Grid for a responsive layout.
-- **JavaScript (ES6+):** DOM rendering, financial calculations and a service worker for offline use.
+- **JavaScript (ES6+):** DOM rendering, month-based rules, financial calculations and a service worker for offline use.
 - **Supabase:** authentication and a PostgreSQL table protected by Row Level Security, accessed through `supabase-js`.
 - **GitHub Pages:** static hosting.
 
@@ -50,7 +51,8 @@ A personal finance app built with HTML, CSS and vanilla JavaScript, for my own u
 
 3. Clone the repository and edit `config.js` with your project URL and `anon` public key (Project Settings → API Keys). Never use the `service_role` key.
 4. Serve the folder over HTTPS, for example with GitHub Pages (Settings → Pages → `main` / root).
-5. Open the site, create your account and install the app. After that, disable new sign-ups in Supabase (Authentication → Sign In / Providers → Email) to keep the app private.
+5. Open the site, create your account and install the app: use the install icon in Chrome, Edge or Chromium on desktop, or Share → Add to Home Screen in Safari on iPhone.
+6. Disable new sign-ups in Supabase (Authentication → Sign In / Providers → Email) to keep the app private.
 
 ## Author
 
