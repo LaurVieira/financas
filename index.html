@@ -181,14 +181,24 @@ function diasAte(g){
   return Math.round((alvo-h)/86400000);
 }
 function fmtMes(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[1]+"/"+p[0]; }
+function mesBase(g){
+  if(g.mes0) return g.mes0;
+  if(g.parc==="sim" && g.inicio) return g.inicio.slice(0,7);
+  return null;
+}
 function gastoInfo(g){
   var r={ ativo:true, atual:0, total:0, estado:"ativo" };
-  if(g.parc==="sim" && g.total>0 && g.inicio){
-    var p=g.inicio.split("-").map(Number);
-    var idx=(view.y-p[0])*12+(view.m-p[1])+1;
+  var base=mesBase(g);
+  if(!base) return r;
+  var p=base.split("-").map(Number);
+  var idx=(view.y-p[0])*12+(view.m-p[1])+1;
+  if(g.parc==="sim" && g.total>0){
     r.atual=idx; r.total=g.total;
     if(idx<1){ r.ativo=false; r.estado="futuro"; }
     else if(idx>g.total){ r.ativo=false; r.estado="quitado"; }
+  } else {
+    if(idx<1){ r.ativo=false; r.estado="futuro"; }
+    else if(g.rep==="nao" && idx>1){ r.ativo=false; r.estado="encerrado"; }
   }
   return r;
 }
@@ -350,14 +360,15 @@ function editExtra(id){
     onDelete:id?function(){ state.renda.extras=state.renda.extras.filter(function(e){return e.id!==id;}); persist(); }:null });
 }
 function editGasto(id){
-  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",total:0,inicio:""};
-  var venc = todayISO();
-  if(id){
-    if(it.parc==="sim" && it.inicio) venc = it.inicio;
-    else {
-      var last = new Date(view.y, view.m, 0).getDate();
-      venc = view.y+"-"+String(view.m).padStart(2,"0")+"-"+String(Math.min(it.dia||1,last)).padStart(2,"0");
-    }
+  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",rep:"sim",total:0,inicio:""};
+  function pad(n){ return String(n).padStart(2,"0"); }
+  var venc;
+  if(id && it.parc==="sim" && it.inicio){ venc = it.inicio; }
+  else {
+    var ym = (id && mesBase(it)) || (view.y+"-"+pad(view.m));
+    var last = new Date(+ym.slice(0,4), +ym.slice(5,7), 0).getDate();
+    var dia = id ? (it.dia||1) : new Date().getDate();
+    venc = ym+"-"+pad(Math.min(dia,last));
   }
   var vals = Object.assign({}, it, { venc:venc });
   openForm({ title:id?"Editar gasto":"Novo gasto", values:vals,
@@ -365,9 +376,10 @@ function editGasto(id){
              {k:"valor",label:"Valor (R$)",type:"money",blank0:true,hint:"Se for parcelado, coloque o valor de cada parcela."},
              {k:"cat",label:"Categoria",type:"select",options:CATS},
              {k:"forma",label:"Forma de pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão de crédito"}]},
-             {k:"venc",label:"Data de vencimento",type:"date",hint:"O app repete o mesmo dia todo mês. Se for parcelado, use a data da primeira parcela."},
+             {k:"venc",label:"Data de vencimento",type:"date",hint:"O gasto só aparece a partir do mês desta data. Se for parcelado, use a data da primeira parcela."},
              {k:"parc",label:"É parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim, parcelado"}]},
-             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}} ],
+             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
+             {k:"rep",label:"Repete todo mês?",type:"select",options:[{v:"sim",l:"Sim, todo mês"},{v:"nao",l:"Não, só neste mês"}],dep:{k:"parc",v:"nao"}} ],
     validate:function(o){
       if(!o.nome) return "Dê um nome.";
       if(!o.venc) return "Informe a data de vencimento.";
@@ -375,7 +387,8 @@ function editGasto(id){
     },
     onSave:function(o){
       o.dia = parseInt(o.venc.split("-")[2], 10);
-      if(o.parc==="sim"){ o.inicio = o.venc; } else { o.total = 0; o.inicio = ""; }
+      o.mes0 = o.venc.slice(0,7);
+      if(o.parc==="sim"){ o.inicio = o.venc; o.rep = "sim"; } else { o.total = 0; o.inicio = ""; }
       delete o.venc;
       if(id){ Object.assign(it,o); } else { o.id=uid(); o.pagos={}; state.gastos.push(o); }
       persist();
@@ -486,22 +499,17 @@ function vRenda(){
 }
 
 function vGastos(){
-  var list = state.gastos.slice().sort(function(a,b){
-    var ia=gastoInfo(a).ativo, ib=gastoInfo(b).ativo;
-    if(ia!==ib) return ia?-1:1;
-    return a.dia-b.dia;
-  });
+  var list = gastosAtivos().sort(function(a,b){ return a.dia-b.dia; });
   var h = monthNav() + '<div class="toolbar"><h2>Gastos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
   h += list.length ? list.map(function(g){
     var inf = gastoInfo(g), pg = isPago(g);
     var meta = [g.forma==="cartao" ? "Cartão de crédito" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
-    if(g.parc==="sim" && g.total>0){
-      meta.push(inf.estado==="ativo" ? "parcela "+inf.atual+"/"+inf.total : inf.estado==="quitado" ? "quitado ("+g.total+"x)" : "começa em "+fmtMes(g.inicio));
-    }
+    if(g.parc==="sim" && g.total>0){ meta.push("parcela "+inf.atual+"/"+inf.total); }
+    else if(g.rep==="nao"){ meta.push("só neste mês"); }
     return '<div class="row'+(inf.ativo?"":" off")+'"><div class="t"><b>'+esc(g.nome)+'</b><span>'+meta.map(esc).join(" · ")+'</span>'
       + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago":"Marcar como pago")+'</button></div>' : '')
       + '</div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
-  }).join("") : '<div class="empty">Cadastre aluguel, internet, mensalidades, parcelas e faturas de cartão.</div>';
+  }).join("") : '<div class="empty">'+(state.gastos.length ? "Nenhum gasto neste mês." : "Cadastre aluguel, internet, mensalidades, parcelas e faturas de cartão.")+'</div>';
   var tot=gastosTotal(), pago=gastosPagos();
   h += '</div><div class="grid"><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(tot)+'</div></div>'
      + '<div class="stat"><div class="l">Sobra após os gastos</div><div class="v">'+money(rendaTotal()-tot)+'</div></div>'
