@@ -104,6 +104,9 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 .next{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
 .next:first-of-type{border-top:0}
 .pill{font-size:12px;background:var(--surface2);padding:2px 8px;border-radius:99px;color:var(--muted)}
+.mesnav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 14px}
+.mesnav b{font-size:16px;flex:1;text-align:center}
+.mesbtn{background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:10px;width:40px;height:40px;font-size:20px;line-height:1;cursor:pointer}
 .chk{border:1px solid var(--line);background:var(--surface2);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
 .chk.on{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:600}
 .row.off{opacity:.55}
@@ -160,13 +163,29 @@ function dayDiff(a,b){ var x=a.split("-").map(Number), y=b.split("-").map(Number
 function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 
 function rendaTotal(){ return state.renda.salario + state.renda.extras.reduce(function(s,e){return s+e.valor;},0); }
-function ymKey(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+var view = (function(){ var d=new Date(); return { y:d.getFullYear(), m:d.getMonth()+1 }; })();
+function ymKey(){ return view.y+"-"+String(view.m).padStart(2,"0"); }
+function mesAtual(){ var d=new Date(); return view.y===d.getFullYear() && view.m===d.getMonth()+1; }
+function mesLabel(){ var t=new Date(view.y,view.m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"}); return t.charAt(0).toUpperCase()+t.slice(1); }
+function shiftMes(n){ var d=new Date(view.y,view.m-1+n,1); view={ y:d.getFullYear(), m:d.getMonth()+1 }; render(); }
+function monthNav(){
+  return '<div class="mesnav"><button class="mesbtn" data-act="mesPrev" aria-label="Mês anterior">‹</button>'
+    + '<b>'+mesLabel()+'</b>'
+    + (mesAtual() ? '' : '<button class="chk" data-act="mesHoje">Mês atual</button>')
+    + '<button class="mesbtn" data-act="mesNext" aria-label="Próximo mês">›</button></div>';
+}
+function diasAte(g){
+  var last = new Date(view.y, view.m, 0).getDate();
+  var alvo = new Date(view.y, view.m-1, Math.min(g.dia,last));
+  var h = new Date(); h = new Date(h.getFullYear(), h.getMonth(), h.getDate());
+  return Math.round((alvo-h)/86400000);
+}
 function fmtMes(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[1]+"/"+p[0]; }
 function gastoInfo(g){
   var r={ ativo:true, atual:0, total:0, estado:"ativo" };
   if(g.parc==="sim" && g.total>0 && g.inicio){
-    var p=g.inicio.split("-").map(Number), n=new Date();
-    var idx=(n.getFullYear()-p[0])*12+(n.getMonth()+1-p[1])+1;
+    var p=g.inicio.split("-").map(Number);
+    var idx=(view.y-p[0])*12+(view.m-p[1])+1;
     r.atual=idx; r.total=g.total;
     if(idx<1){ r.ativo=false; r.estado="futuro"; }
     else if(idx>g.total){ r.ativo=false; r.estado="quitado"; }
@@ -405,7 +424,7 @@ function vResumo(){
   var renda=rendaTotal(), gastos=gastosTotal(), sobra=renda-gastos, inv=investTotais();
   var pct = renda>0 ? Math.min(100, gastos/renda*100) : 0;
   var pago=gastosPagos(), falta=gastos-pago;
-  var h = '<div class="grid">'
+  var h = monthNav() + '<div class="grid">'
     + '<div class="stat big"><div class="l">Sobra do mês (renda − gastos)</div><div class="v">'+money(sobra)+'</div></div>'
     + '<div class="stat"><div class="l">Renda mensal</div><div class="v">'+money(renda)+'</div></div>'
     + '<div class="stat"><div class="l">Gastos do mês</div><div class="v">'+money(gastos)+'</div></div>'
@@ -428,16 +447,14 @@ function vResumo(){
       return '<div class="catrow"><span>'+esc(c)+'</span><div class="bar"><i style="width:'+(byCat[c]/max*100).toFixed(1)+'%"></i></div><b>'+money(byCat[c])+'</b></div>';
     }).join("") + '</div>';
 
-    var now = new Date(), d0 = now.getDate();
-    var lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
     var list = ativos.filter(function(g){ return !isPago(g); }).map(function(g){
-      return { g:g, diff:Math.min(g.dia,lastDay) - d0 };
+      return { g:g, diff:diasAte(g) };
     }).sort(function(a,b){return a.diff-b.diff;}).slice(0,5);
     if(list.length){
-      h += '<div class="card"><h2>A pagar neste mês</h2>' + list.map(function(x){
+      h += '<div class="card"><h2>'+(mesAtual() ? "A pagar neste mês" : "A pagar em "+mesLabel())+'</h2>' + list.map(function(x){
         var inf = gastoInfo(x.g);
         var nome = esc(x.g.nome) + (inf.total ? ' '+inf.atual+'/'+inf.total : '');
-        var lbl = x.diff<0?"venceu dia "+x.g.dia : x.diff===0?"vence hoje" : x.diff===1?"vence amanhã" : "vence dia "+x.g.dia+" · em "+x.diff+" dias";
+        var lbl = x.diff<0 ? "venceu dia "+x.g.dia : x.diff===0 ? "vence hoje" : x.diff===1 ? "vence amanhã" : "vence dia "+x.g.dia+(x.diff<=31 ? " · em "+x.diff+" dias" : "");
         return '<div class="next"><span>'+nome+' <span class="pill'+(x.diff<=3?" soon":"")+'">'+lbl+'</span></span><b>'+money(x.g.valor)+'</b></div>';
       }).join("") + '</div>';
     }
@@ -464,7 +481,7 @@ function vGastos(){
     if(ia!==ib) return ia?-1:1;
     return a.dia-b.dia;
   });
-  var h = '<div class="toolbar"><h2>Gastos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
+  var h = monthNav() + '<div class="toolbar"><h2>Gastos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
   h += list.length ? list.map(function(g){
     var inf = gastoInfo(g), pg = isPago(g);
     var meta = [g.forma==="cartao" ? "Cartão de crédito" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
@@ -472,13 +489,13 @@ function vGastos(){
       meta.push(inf.estado==="ativo" ? "parcela "+inf.atual+"/"+inf.total : inf.estado==="quitado" ? "quitado ("+g.total+"x)" : "começa em "+fmtMes(g.inicio));
     }
     return '<div class="row'+(inf.ativo?"":" off")+'"><div class="t"><b>'+esc(g.nome)+'</b><span>'+meta.map(esc).join(" · ")+'</span>'
-      + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago neste mês":"Marcar como pago")+'</button></div>' : '')
+      + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago":"Marcar como pago")+'</button></div>' : '')
       + '</div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
   }).join("") : '<div class="empty">Cadastre aluguel, internet, mensalidades, parcelas e faturas de cartão.</div>';
   var tot=gastosTotal(), pago=gastosPagos();
   h += '</div><div class="grid"><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(tot)+'</div></div>'
      + '<div class="stat"><div class="l">Sobra após os gastos</div><div class="v">'+money(rendaTotal()-tot)+'</div></div>'
-     + '<div class="stat"><div class="l">Já pago neste mês</div><div class="v">'+money(pago)+'</div></div>'
+     + '<div class="stat"><div class="l">Já pago no mês</div><div class="v">'+money(pago)+'</div></div>'
      + '<div class="stat"><div class="l">Falta pagar</div><div class="v">'+money(tot-pago)+'</div></div></div>';
   return h;
 }
@@ -525,6 +542,9 @@ document.addEventListener("click", function(ev){
     case "addGasto": editGasto(null); break;
     case "editGasto": editGasto(id); break;
     case "togglePago": togglePago(id); break;
+    case "mesPrev": shiftMes(-1); break;
+    case "mesNext": shiftMes(1); break;
+    case "mesHoje": var hj=new Date(); view={ y:hj.getFullYear(), m:hj.getMonth()+1 }; render(); break;
     case "addInv": editInvest(null); break;
     case "editInv": editInvest(id); break;
     case "delInv": if(confirm("Excluir este CDB?")){ state.invest=state.invest.filter(function(x){return x.id!==id;}); persist(); } break;
