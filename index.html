@@ -146,6 +146,7 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 
 <script>
 "use strict";
+var VERSAO = "v6";
 var CATS = ["Moradia","Contas","Transporte","Alimentação","Saúde","Educação","Assinaturas","Dívidas","Outros"];
 var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65, inicioApp:"" };
 var state = clone(DEFAULT);
@@ -488,7 +489,7 @@ function vResumo(){
       }).join("") + '</div>';
     }
   }
-  h += '<div class="card"><h2>Seus dados</h2><div class="small muted" style="margin-bottom:10px">Salvos na sua conta e sincronizados entre computador e iPhone. Funciona offline e sincroniza quando a internet voltar.</div><div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-act="export">Baixar backup</button><button class="btn ghost" data-act="logout">Sair da conta</button></div></div>';
+  h += '<div class="card"><h2>Seus dados</h2><div class="small muted" style="margin-bottom:10px">Salvos na sua conta e sincronizados entre computador e iPhone. Funciona offline e sincroniza quando a internet voltar.</div><div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-act="export">Baixar backup</button><button class="btn ghost" data-act="logout">Sair da conta</button></div><div class="note" style="margin-top:10px">Versão do app: '+VERSAO+'</div></div>';
   return h;
 }
 
