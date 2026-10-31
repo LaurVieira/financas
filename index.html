@@ -146,7 +146,7 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 
 <script>
 "use strict";
-var VERSAO = "v9";
+var VERSAO = "v11";
 var CATS = ["Moradia","Contas","Transporte","Alimentação","Saúde","Educação","Assinaturas","Dívidas","Outros"];
 var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65, inicioApp:"" };
 var state = clone(DEFAULT);
@@ -162,17 +162,28 @@ function num(s){ s=String(s==null?"":s).trim().replace(/\s/g,"").replace(/^R\$/,
 function fmtNum(n){ return String(n==null?"":n).replace(".",","); }
 function todayISO(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function dayDiff(a,b){ var x=a.split("-").map(Number), y=b.split("-").map(Number); return Math.round((Date.UTC(y[0],y[1]-1,y[2])-Date.UTC(x[0],x[1]-1,x[2]))/86400000); }
+function fmtDM(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]; }
+function addDiasISO(iso,n){ var p=iso.split("-").map(Number); var d=new Date(p[0],p[1]-1,p[2]+n); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 
 function extraInfo(e){
   if(!e.mes0) return { ativo:true };
   var p=e.mes0.split("-").map(Number), idx=(view.y-p[0])*12+(view.m-p[1])+1;
   if(idx<1) return { ativo:false };
+  if(e.tipo==="periodo"){
+    var q=(e.mes1||e.mes0).split("-").map(Number);
+    return { ativo:(view.y-q[0])*12+(view.m-q[1])<=0 };
+  }
   if(e.tipo!=="salario" && idx>1) return { ativo:false };
   return { ativo:true };
 }
 function extrasAtivas(){ return state.renda.extras.filter(function(e){ return extraInfo(e).ativo; }); }
-function rendaTotal(){ return state.renda.salario + extrasAtivas().reduce(function(s,e){return s+e.valor;},0); }
+function salarioDe(){
+  var key = view.y+"-"+String(view.m).padStart(2,"0"), r = null;
+  (state.renda.hist||[]).forEach(function(e){ if(e.mes<=key && (!r || e.mes>=r.mes)) r = e; });
+  return r || { mes:"", salario:0, dia:5 };
+}
+function rendaTotal(){ return salarioDe().salario + extrasAtivas().reduce(function(s,e){return s+e.valor;},0); }
 var view = (function(){ var d=new Date(); return { y:d.getFullYear(), m:d.getMonth()+1 }; })();
 function ymNow(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
 function ymIni(){ var t=(state.inicioApp||ymNow()).split("-").map(Number); return t[0]*12+t[1]; }
@@ -266,6 +277,9 @@ function normalize(s){
   d.inicioApp = s.inicioApp || ((d.gastos.length || d.invest.length || d.renda.salario) ? "2026-10" : ymNow());
   d.gastos.forEach(function(g){ if(!mesBase(g)){ g.mes0 = d.inicioApp; g.rep = "nao"; } });
   d.renda.extras.forEach(function(e){ if(!e.mes0){ e.mes0 = d.inicioApp; e.tipo = "outras"; } });
+  var hs = Array.isArray((s.renda||{}).hist) ? s.renda.hist.filter(function(e){ return e && e.mes && isFinite(+e.salario); }) : [];
+  if(!hs.length && d.renda.salario>0) hs = [{ mes:d.inicioApp, salario:d.renda.salario, dia:d.renda.dia }];
+  d.renda.hist = hs.sort(function(a,b){ return a.mes<b.mes ? -1 : a.mes>b.mes ? 1 : 0; });
   return d;
 }
 function persist(){
@@ -372,29 +386,48 @@ function openForm(opt){
 }
 
 function editSalario(){
-  openForm({ title:"Salário", values:{ salario:state.renda.salario, dia:state.renda.dia },
+  var atual = salarioDe();
+  openForm({ title:"Salário a partir de "+mesLabel(), values:{ salario:atual.salario, dia:atual.dia },
     fields:[ {k:"salario",label:"Salário (R$)",type:"money",blank0:true,ph:"0,00"}, {k:"dia",label:"Dia do pagamento",type:"int"} ],
     validate:function(o){ if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31."; },
-    onSave:function(o){ state.renda.salario=o.salario; state.renda.dia=o.dia; persist(); } });
+    onSave:function(o){
+      var key = ymKey(), h = state.renda.hist = state.renda.hist || [];
+      var ex = h.find(function(e){ return e.mes===key; });
+      if(ex){ ex.salario=o.salario; ex.dia=o.dia; } else { h.push({ mes:key, salario:o.salario, dia:o.dia }); }
+      h.sort(function(a,b){ return a.mes<b.mes ? -1 : a.mes>b.mes ? 1 : 0; });
+      persist();
+    } });
 }
 function editExtra(id){
   var it = state.renda.extras.find(function(e){return e.id===id;}) || {nome:"",valor:0,tipo:"outras"};
   function pad(n){ return String(n).padStart(2,"0"); }
-  var data = it.data;
-  if(!data){
+  var base = it.data;
+  if(!base){
     var ym = (id && it.mes0) || (view.y+"-"+pad(view.m));
     var last = new Date(+ym.slice(0,4), +ym.slice(5,7), 0).getDate();
-    data = ym+"-"+pad(Math.min(new Date().getDate(), last));
+    base = ym+"-"+pad(Math.min(new Date().getDate(), last));
   }
-  var vals = Object.assign({}, it, { data:data });
+  var ini = it.ini || base;
+  var fim = it.fim || addDiasISO(ini, 6);
+  var vals = Object.assign({}, it, { data:base, ini:ini, fim:fim, tipo: it.tipo==="periodo" ? "periodo" : "outras" });
   openForm({ title:id?"Editar renda":"Nova renda", values:vals,
     fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Freelance"},
              {k:"valor",label:"Valor (R$)",type:"money",blank0:true},
-             {k:"tipo",label:"Categoria",type:"select",options:[{v:"outras",l:"Outras"},{v:"salario",l:"Salário"}]},
-             {k:"data",label:"Data",type:"date"} ],
-    validate:function(o){ if(!o.nome) return "Digite o nome."; if(!(o.valor>0)) return "Digite o valor."; if(!o.data) return "Escolha a data."; },
+             {k:"tipo",label:"Categoria",type:"select",options:[{v:"outras",l:"Outras"},{v:"periodo",l:"Por período"}]},
+             {k:"data",label:"Data",type:"date",dep:{k:"tipo",v:"outras"}},
+             {k:"ini",label:"De",type:"date",dep:{k:"tipo",v:"periodo"}},
+             {k:"fim",label:"Até",type:"date",dep:{k:"tipo",v:"periodo"}} ],
+    validate:function(o){
+      if(!o.nome) return "Digite o nome.";
+      if(!(o.valor>0)) return "Digite o valor.";
+      if(o.tipo==="periodo"){
+        if(!o.ini || !o.fim) return "Escolha as datas.";
+        if(o.fim < o.ini) return "A data final vem antes da inicial.";
+      } else if(!o.data) return "Escolha a data.";
+    },
     onSave:function(o){
-      o.mes0 = o.data.slice(0,7);
+      if(o.tipo==="periodo"){ o.data=o.ini; o.mes0=o.ini.slice(0,7); o.mes1=o.fim.slice(0,7); }
+      else { o.mes0=o.data.slice(0,7); o.ini=""; o.fim=""; o.mes1=""; }
       if(id){ Object.assign(it,o); } else { o.id=uid(); state.renda.extras.push(o); }
       persist();
     },
@@ -529,12 +562,12 @@ function vResumo(){
 }
 
 function vRenda(){
-  var s=state.renda, extras=extrasAtivas();
+  var s=salarioDe(), extras=extrasAtivas();
   var h = monthNav() + '<div class="toolbar"><h2>Renda</h2></div>';
   h += '<div class="card"><div class="row"><div class="t"><b>Salário</b><span>'+(s.salario>0?"dia "+s.dia+" · todo mês":"não cadastrado")+'</span></div><div class="amt">'+money(s.salario)+'</div><button class="ed" data-act="salario" aria-label="Editar salário">'+ICONS.edit+'</button></div></div>';
   h += '<div class="toolbar"><h2 style="font-size:15px;color:var(--muted)">Outras rendas</h2><button class="btn" data-act="addExtra">+ Adicionar</button></div><div class="card">';
   h += extras.length ? extras.map(function(e){
-    var meta = e.tipo==="salario" ? "Salário · todo mês" : "Outras" + (e.data ? " · "+fmtDate(e.data) : "");
+    var meta = e.tipo==="periodo" ? "Período · "+fmtDM(e.ini)+" a "+fmtDM(e.fim) : e.tipo==="salario" ? "Salário · todo mês" : "Outras" + (e.data ? " · "+fmtDate(e.data) : "");
     return '<div class="row"><div class="t"><b>'+esc(e.nome)+'</b><span>'+esc(meta)+'</span></div><div class="amt">'+money(e.valor)+'</div><button class="ed" data-act="editExtra" data-id="'+e.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
   }).join("") : '<div class="empty">Nenhuma renda neste mês.</div>';
   h += '</div><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(rendaTotal())+'</div></div>';
