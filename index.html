@@ -351,22 +351,32 @@ function editExtra(id){
 }
 function editGasto(id){
   var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",total:0,inicio:""};
-  openForm({ title:id?"Editar gasto":"Novo gasto", values:it,
+  var venc = todayISO();
+  if(id){
+    if(it.parc==="sim" && it.inicio) venc = it.inicio;
+    else {
+      var last = new Date(view.y, view.m, 0).getDate();
+      venc = view.y+"-"+String(view.m).padStart(2,"0")+"-"+String(Math.min(it.dia||1,last)).padStart(2,"0");
+    }
+  }
+  var vals = Object.assign({}, it, { venc:venc });
+  openForm({ title:id?"Editar gasto":"Novo gasto", values:vals,
     fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Aluguel"},
              {k:"valor",label:"Valor (R$)",type:"money",blank0:true,hint:"Se for parcelado, coloque o valor de cada parcela."},
              {k:"cat",label:"Categoria",type:"select",options:CATS},
-             {k:"dia",label:"Dia do vencimento",type:"int"},
              {k:"forma",label:"Forma de pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão de crédito"}]},
+             {k:"venc",label:"Data de vencimento",type:"date",hint:"O app repete o mesmo dia todo mês. Se for parcelado, use a data da primeira parcela."},
              {k:"parc",label:"É parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim, parcelado"}]},
-             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
-             {k:"inicio",label:"Data da primeira parcela",type:"date",dep:{k:"parc",v:"sim"},hint:"Só o mês e o ano importam. O app calcula sozinho em qual parcela você está e para de contar quando quitar."} ],
+             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}} ],
     validate:function(o){
       if(!o.nome) return "Dê um nome.";
-      if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31.";
-      if(o.parc==="sim"){ if(!(o.total>=2)) return "Informe o número de parcelas (2 ou mais)."; if(!o.inicio) return "Informe a data da primeira parcela."; }
+      if(!o.venc) return "Informe a data de vencimento.";
+      if(o.parc==="sim" && !(o.total>=2)) return "Informe o número de parcelas (2 ou mais).";
     },
     onSave:function(o){
-      if(o.parc!=="sim"){ o.total=0; o.inicio=""; }
+      o.dia = parseInt(o.venc.split("-")[2], 10);
+      if(o.parc==="sim"){ o.inicio = o.venc; } else { o.total = 0; o.inicio = ""; }
+      delete o.venc;
       if(id){ Object.assign(it,o); } else { o.id=uid(); o.pagos={}; state.gastos.push(o); }
       persist();
     },
