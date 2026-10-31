@@ -396,7 +396,14 @@ function editSalario(){
       if(ex){ ex.salario=o.salario; ex.dia=o.dia; } else { h.push({ mes:key, salario:o.salario, dia:o.dia }); }
       h.sort(function(a,b){ return a.mes<b.mes ? -1 : a.mes>b.mes ? 1 : 0; });
       persist();
-    } });
+    },
+    onDelete: atual.salario>0 ? function(){
+      var key = ymKey();
+      var h = (state.renda.hist || []).filter(function(e){ return e.mes<key; });
+      h.push({ mes:key, salario:0, dia:atual.dia });
+      state.renda.hist = h;
+      persist();
+    } : null });
 }
 function editExtra(id){
   var it = state.renda.extras.find(function(e){return e.id===id;}) || {nome:"",valor:0,tipo:"outras"};
