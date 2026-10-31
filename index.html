@@ -106,6 +106,7 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 .pill{font-size:12px;background:var(--surface2);padding:2px 8px;border-radius:99px;color:var(--muted)}
 .mesnav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 14px}
 .mesnav b{font-size:16px;flex:1;text-align:center}
+.mesbtn:disabled{opacity:.3;cursor:default}
 .mesbtn{background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:10px;width:40px;height:40px;font-size:20px;line-height:1;cursor:pointer}
 .chk{border:1px solid var(--line);background:var(--surface2);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
 .chk.on{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:600}
@@ -146,7 +147,7 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 <script>
 "use strict";
 var CATS = ["Moradia","Contas","Transporte","Alimentação","Saúde","Educação","Assinaturas","Dívidas","Outros"];
-var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65 };
+var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65, inicioApp:"" };
 var state = clone(DEFAULT);
 var tab = "resumo";
 var store = { doc:null, uid:null, timer:null, saving:false, dirty:false, pendingRemote:null };
@@ -164,12 +165,15 @@ function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+
 
 function rendaTotal(){ return state.renda.salario + state.renda.extras.reduce(function(s,e){return s+e.valor;},0); }
 var view = (function(){ var d=new Date(); return { y:d.getFullYear(), m:d.getMonth()+1 }; })();
+function ymNow(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function ymIni(){ var t=(state.inicioApp||ymNow()).split("-").map(Number); return t[0]*12+t[1]; }
+function podeVoltar(){ return view.y*12+view.m > ymIni(); }
 function ymKey(){ return view.y+"-"+String(view.m).padStart(2,"0"); }
 function mesAtual(){ var d=new Date(); return view.y===d.getFullYear() && view.m===d.getMonth()+1; }
 function mesLabel(){ var t=new Date(view.y,view.m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"}); return t.charAt(0).toUpperCase()+t.slice(1); }
-function shiftMes(n){ var d=new Date(view.y,view.m-1+n,1); view={ y:d.getFullYear(), m:d.getMonth()+1 }; render(); }
+function shiftMes(n){ if(n<0 && !podeVoltar()) return; var d=new Date(view.y,view.m-1+n,1); view={ y:d.getFullYear(), m:d.getMonth()+1 }; render(); }
 function monthNav(){
-  return '<div class="mesnav"><button class="mesbtn" data-act="mesPrev" aria-label="Mês anterior">‹</button>'
+  return '<div class="mesnav"><button class="mesbtn" data-act="mesPrev" aria-label="Mês anterior"'+(podeVoltar()?'':' disabled')+'>‹</button>'
     + '<b>'+mesLabel()+'</b>'
     + (mesAtual() ? '' : '<button class="chk" data-act="mesHoje">Mês atual</button>')
     + '<button class="mesbtn" data-act="mesNext" aria-label="Próximo mês">›</button></div>';
@@ -198,7 +202,7 @@ function gastoInfo(g){
     else if(idx>g.total){ r.ativo=false; r.estado="quitado"; }
   } else {
     if(idx<1){ r.ativo=false; r.estado="futuro"; }
-    else if(g.rep==="nao" && idx>1){ r.ativo=false; r.estado="encerrado"; }
+    else if(g.rep!=="sim" && idx>1){ r.ativo=false; r.estado="encerrado"; }
   }
   return r;
 }
@@ -240,6 +244,8 @@ function normalize(s){
   d.gastos = Array.isArray(s.gastos)? s.gastos : [];
   d.invest = Array.isArray(s.invest)? s.invest : [];
   d.cdi = +s.cdi || d.cdi;
+  d.inicioApp = s.inicioApp || ((d.gastos.length || d.invest.length || d.renda.salario) ? "2026-10" : ymNow());
+  d.gastos.forEach(function(g){ if(!mesBase(g)){ g.mes0 = d.inicioApp; g.rep = "nao"; } });
   return d;
 }
 function persist(){
@@ -360,7 +366,7 @@ function editExtra(id){
     onDelete:id?function(){ state.renda.extras=state.renda.extras.filter(function(e){return e.id!==id;}); persist(); }:null });
 }
 function editGasto(id){
-  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",rep:"sim",total:0,inicio:""};
+  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",rep:"nao",total:0,inicio:""};
   function pad(n){ return String(n).padStart(2,"0"); }
   var venc;
   if(id && it.parc==="sim" && it.inicio){ venc = it.inicio; }
@@ -376,10 +382,10 @@ function editGasto(id){
              {k:"valor",label:"Valor (R$)",type:"money",blank0:true,hint:"Se for parcelado, coloque o valor de cada parcela."},
              {k:"cat",label:"Categoria",type:"select",options:CATS},
              {k:"forma",label:"Forma de pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão de crédito"}]},
-             {k:"venc",label:"Data de vencimento",type:"date",hint:"O gasto só aparece a partir do mês desta data. Se for parcelado, use a data da primeira parcela."},
+             {k:"venc",label:"Data de vencimento",type:"date",hint:"O gasto aparece no mês desta data. Se for parcelado, use a data da primeira parcela."},
              {k:"parc",label:"É parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim, parcelado"}]},
              {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
-             {k:"rep",label:"Repete todo mês?",type:"select",options:[{v:"sim",l:"Sim, todo mês"},{v:"nao",l:"Não, só neste mês"}],dep:{k:"parc",v:"nao"}} ],
+             {k:"rep",label:"Tipo do gasto",type:"select",options:[{v:"nao",l:"Só neste mês (muda de um mês para o outro)"},{v:"sim",l:"Fixo (repete todo mês)"}],dep:{k:"parc",v:"nao"}} ],
     validate:function(o){
       if(!o.nome) return "Dê um nome.";
       if(!o.venc) return "Informe a data de vencimento.";
@@ -505,7 +511,7 @@ function vGastos(){
     var inf = gastoInfo(g), pg = isPago(g);
     var meta = [g.forma==="cartao" ? "Cartão de crédito" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
     if(g.parc==="sim" && g.total>0){ meta.push("parcela "+inf.atual+"/"+inf.total); }
-    else if(g.rep==="nao"){ meta.push("só neste mês"); }
+    else if(g.rep==="sim"){ meta.push("fixo"); }
     return '<div class="row'+(inf.ativo?"":" off")+'"><div class="t"><b>'+esc(g.nome)+'</b><span>'+meta.map(esc).join(" · ")+'</span>'
       + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago":"Marcar como pago")+'</button></div>' : '')
       + '</div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
