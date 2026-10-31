@@ -138,7 +138,6 @@ label.fl input:focus,label.fl select:focus{outline:2px solid var(--accent);outli
 
 <script>
 "use strict";
-/* ============ Estado ============ */
 var CATS = ["Moradia","Contas","Transporte","Alimentação","Saúde","Educação","Assinaturas","Dívidas","Outros"];
 var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65 };
 var state = clone(DEFAULT);
@@ -156,7 +155,6 @@ function todayISO(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMo
 function dayDiff(a,b){ var x=a.split("-").map(Number), y=b.split("-").map(Number); return Math.round((Date.UTC(y[0],y[1]-1,y[2])-Date.UTC(x[0],x[1]-1,x[2]))/86400000); }
 function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 
-/* ============ Cálculos ============ */
 function rendaTotal(){ return state.renda.salario + state.renda.extras.reduce(function(s,e){return s+e.valor;},0); }
 function gastosTotal(){ return state.gastos.reduce(function(s,g){return s+g.valor;},0); }
 function aliquotaIR(dias){ return dias<=180?0.225 : dias<=360?0.20 : dias<=720?0.175 : 0.15; }
@@ -174,7 +172,6 @@ function investTotais(){
   return { aplicado:ap, liquido:liq, ganho:ganho };
 }
 
-/* ============ Persistência (local + Supabase) ============ */
 var LS = "fin:v2";
 var sb = null, session = null;
 var store = { timer:null, saving:false, dirty:false, pendingRemote:null };
@@ -234,7 +231,6 @@ async function pull(){
   }catch(e){ setSync("off","Offline: usando dados do aparelho"); }
 }
 
-/* ---- login ---- */
 function authMsg(t, ok){ var m=document.getElementById("aMsg"); m.textContent=t||""; m.className="msg"+(ok?" ok":""); }
 function updateAuthUI(){ document.getElementById("auth").classList.toggle("on", !session); }
 async function doAuth(signup){
@@ -258,7 +254,6 @@ async function logout(){
   state = clone(DEFAULT); store.dirty=false; session=null; updateAuthUI(); render();
 }
 
-/* ============ Formulários ============ */
 function openForm(opt){
   var dlg = document.getElementById("dlg");
   var html = '<form class="f" method="dialog" id="ff"><h3>'+esc(opt.title)+'</h3>';
@@ -299,7 +294,6 @@ function openForm(opt){
   dlg.showModal();
 }
 
-/* ---- ações ---- */
 function editSalario(){
   openForm({ title:"Salário", values:{ salario:state.renda.salario, dia:state.renda.dia },
     fields:[ {k:"salario",label:"Salário líquido mensal (R$)",type:"money",blank0:true,ph:"0,00"}, {k:"dia",label:"Dia do mês em que cai",type:"int"} ],
@@ -349,7 +343,6 @@ function exportar(){
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
 }
 
-/* ============ Views ============ */
 var ICONS = {
   resumo:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
   renda:'<svg viewBox="0 0 24 24"><path d="M12 3v18M16 7.5c0-1.7-1.8-3-4-3s-4 1.3-4 3 1.8 2.8 4 3.5 4 1.8 4 3.5-1.8 3-4 3-4-1.3-4-3"/></svg>',
@@ -458,7 +451,6 @@ function render(){
   v.innerHTML = tab==="resumo"?vResumo() : tab==="renda"?vRenda() : tab==="gastos"?vGastos() : vInvest();
 }
 
-/* ============ Eventos ============ */
 document.addEventListener("click", function(ev){
   var b = ev.target.closest("[data-tab],[data-act]"); if(!b) return;
   if(b.dataset.tab){ tab=b.dataset.tab; render(); window.scrollTo(0,0); return; }
@@ -477,7 +469,6 @@ document.addEventListener("click", function(ev){
   }
 });
 
-/* ============ Início ============ */
 async function boot(){
   var loc = localLoad();
   if(loc && loc.state){ state = normalize(loc.state); store.dirty = !!loc.dirty; }
