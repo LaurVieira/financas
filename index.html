@@ -391,7 +391,7 @@ function editSalario(){
     fields:[ {k:"salario",label:"Salário (R$)",type:"money",blank0:true,ph:"0,00"}, {k:"dia",label:"Dia do pagamento",type:"int"} ],
     validate:function(o){ if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31."; },
     onSave:function(o){
-      var key = ymKey(), h = state.renda.hist = state.renda.hist || [];
+      var key = ymKey(), h = state.renda.hist = (state.renda.hist || []).filter(function(e){ return e.mes<=key; });
       var ex = h.find(function(e){ return e.mes===key; });
       if(ex){ ex.salario=o.salario; ex.dia=o.dia; } else { h.push({ mes:key, salario:o.salario, dia:o.dia }); }
       h.sort(function(a,b){ return a.mes<b.mes ? -1 : a.mes>b.mes ? 1 : 0; });
