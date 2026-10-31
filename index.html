@@ -104,6 +104,9 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 .next{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
 .next:first-of-type{border-top:0}
 .pill{font-size:12px;background:var(--surface2);padding:2px 8px;border-radius:99px;color:var(--muted)}
+.chk{border:1px solid var(--line);background:var(--surface2);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.chk.on{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:600}
+.row.off{opacity:.55}
 .pill.soon{background:var(--warn-soft);color:var(--warn);font-weight:600}
 @media (min-width:640px){.stat .v{font-size:22px}}
 #auth{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;align-items:center;justify-content:center;padding:20px}
@@ -157,7 +160,23 @@ function dayDiff(a,b){ var x=a.split("-").map(Number), y=b.split("-").map(Number
 function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 
 function rendaTotal(){ return state.renda.salario + state.renda.extras.reduce(function(s,e){return s+e.valor;},0); }
-function gastosTotal(){ return state.gastos.reduce(function(s,g){return s+g.valor;},0); }
+function ymKey(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function fmtMes(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[1]+"/"+p[0]; }
+function gastoInfo(g){
+  var r={ ativo:true, atual:0, total:0, estado:"ativo" };
+  if(g.parc==="sim" && g.total>0 && g.inicio){
+    var p=g.inicio.split("-").map(Number), n=new Date();
+    var idx=(n.getFullYear()-p[0])*12+(n.getMonth()+1-p[1])+1;
+    r.atual=idx; r.total=g.total;
+    if(idx<1){ r.ativo=false; r.estado="futuro"; }
+    else if(idx>g.total){ r.ativo=false; r.estado="quitado"; }
+  }
+  return r;
+}
+function gastosAtivos(){ return state.gastos.filter(function(g){ return gastoInfo(g).ativo; }); }
+function isPago(g){ return !!(g.pagos && g.pagos[ymKey()]); }
+function gastosTotal(){ return gastosAtivos().reduce(function(s,g){return s+g.valor;},0); }
+function gastosPagos(){ return gastosAtivos().filter(isPago).reduce(function(s,g){return s+g.valor;},0); }
 function aliquotaIR(dias){ return dias<=180?0.225 : dias<=360?0.20 : dias<=720?0.175 : 0.15; }
 function calcInv(i){
   var dias = Math.max(0, dayDiff(i.data, todayISO()));
@@ -260,7 +279,7 @@ function openForm(opt){
   var html = '<form class="f" method="dialog" id="ff"><h3>'+esc(opt.title)+'</h3>';
   opt.fields.forEach(function(f){
     var v = opt.values[f.k]; if(v==null) v="";
-    html += '<label class="fl">'+esc(f.label);
+    html += '<label class="fl"'+(f.dep?' data-dk="'+f.dep.k+'" data-dv="'+f.dep.v+'"':'')+'>'+esc(f.label);
     if(f.type==="select"){
       html += '<select name="'+f.k+'">'+f.options.map(function(o){ var ov=o.v!==undefined?o.v:o, ol=o.l!==undefined?o.l:o; return '<option value="'+esc(ov)+'"'+(String(ov)===String(v)?" selected":"")+'>'+esc(ol)+'</option>'; }).join("")+'</select>';
     } else if(f.type==="date"){
@@ -276,6 +295,8 @@ function openForm(opt){
   html += '<button type="button" class="btn ghost" id="fcan">Cancelar</button><button type="submit" class="btn">Salvar</button></div></form>';
   dlg.innerHTML = html;
   var form = dlg.querySelector("form");
+  function applyDeps(){ form.querySelectorAll("[data-dk]").forEach(function(l){ l.style.display = form.elements[l.dataset.dk].value===l.dataset.dv ? "" : "none"; }); }
+  form.addEventListener("change", applyDeps); applyDeps();
   function close(){ dlg.close(); }
   dlg.querySelector("#fcan").onclick = close;
   if(opt.onDelete) dlg.querySelector("#fdel").onclick = function(){ if(confirm("Excluir este item?")){ opt.onDelete(); close(); } };
@@ -310,13 +331,33 @@ function editExtra(id){
     onDelete:id?function(){ state.renda.extras=state.renda.extras.filter(function(e){return e.id!==id;}); persist(); }:null });
 }
 function editGasto(id){
-  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5};
-  openForm({ title:id?"Editar gasto fixo":"Novo gasto fixo", values:it,
-    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Aluguel"}, {k:"valor",label:"Valor (R$)",type:"money",blank0:true},
-             {k:"cat",label:"Categoria",type:"select",options:CATS}, {k:"dia",label:"Dia do vencimento",type:"int"} ],
-    validate:function(o){ if(!o.nome) return "Dê um nome."; if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31."; },
-    onSave:function(o){ if(id){ Object.assign(it,o); } else { o.id=uid(); state.gastos.push(o); } persist(); },
+  var it = state.gastos.find(function(g){return g.id===id;}) || {nome:"",valor:0,cat:"Moradia",dia:5,forma:"outro",parc:"nao",total:0,inicio:""};
+  openForm({ title:id?"Editar gasto":"Novo gasto", values:it,
+    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Aluguel"},
+             {k:"valor",label:"Valor (R$)",type:"money",blank0:true,hint:"Se for parcelado, coloque o valor de cada parcela."},
+             {k:"cat",label:"Categoria",type:"select",options:CATS},
+             {k:"dia",label:"Dia do vencimento",type:"int"},
+             {k:"forma",label:"Forma de pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão de crédito"}]},
+             {k:"parc",label:"É parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim, parcelado"}]},
+             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
+             {k:"inicio",label:"Data da primeira parcela",type:"date",dep:{k:"parc",v:"sim"},hint:"Só o mês e o ano importam. O app calcula sozinho em qual parcela você está e para de contar quando quitar."} ],
+    validate:function(o){
+      if(!o.nome) return "Dê um nome.";
+      if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31.";
+      if(o.parc==="sim"){ if(!(o.total>=2)) return "Informe o número de parcelas (2 ou mais)."; if(!o.inicio) return "Informe a data da primeira parcela."; }
+    },
+    onSave:function(o){
+      if(o.parc!=="sim"){ o.total=0; o.inicio=""; }
+      if(id){ Object.assign(it,o); } else { o.id=uid(); o.pagos={}; state.gastos.push(o); }
+      persist();
+    },
     onDelete:id?function(){ state.gastos=state.gastos.filter(function(g){return g.id!==id;}); persist(); }:null });
+}
+function togglePago(id){
+  var g = state.gastos.find(function(x){return x.id===id;}); if(!g) return;
+  var k = ymKey(); g.pagos = g.pagos || {};
+  if(g.pagos[k]) delete g.pagos[k]; else g.pagos[k] = true;
+  persist();
 }
 function editInvest(id){
   var it = state.invest.find(function(i){return i.id===id;}) || {nome:"",banco:"",valor:0,data:todayISO(),tipo:"cdi",taxa:100,venc:""};
@@ -363,40 +404,46 @@ function renderNav(){
 function vResumo(){
   var renda=rendaTotal(), gastos=gastosTotal(), sobra=renda-gastos, inv=investTotais();
   var pct = renda>0 ? Math.min(100, gastos/renda*100) : 0;
+  var pago=gastosPagos(), falta=gastos-pago;
   var h = '<div class="grid">'
-    + '<div class="stat big"><div class="l">Sobra do mês (renda − gastos fixos)</div><div class="v">'+money(sobra)+'</div></div>'
+    + '<div class="stat big"><div class="l">Sobra do mês (renda − gastos)</div><div class="v">'+money(sobra)+'</div></div>'
     + '<div class="stat"><div class="l">Renda mensal</div><div class="v">'+money(renda)+'</div></div>'
-    + '<div class="stat"><div class="l">Gastos fixos</div><div class="v">'+money(gastos)+'</div></div>'
+    + '<div class="stat"><div class="l">Gastos do mês</div><div class="v">'+money(gastos)+'</div></div>'
     + '</div>';
   h += '<div class="card"><h2>Quanto da renda está comprometido</h2><div class="bar'+(pct>80?" warn":"")+'"><i style="width:'+pct.toFixed(1)+'%"></i></div>'
-    + '<div class="small muted">'+(renda>0? pct.toFixed(0)+"% da renda vai para gastos fixos" : "Cadastre seu salário na aba Renda")+'</div></div>';
+    + '<div class="small muted">'+(renda>0? pct.toFixed(0)+"% da renda vai para gastos" : "Cadastre seu salário na aba Renda")+'</div>'
+    + (gastos>0 ? '<div class="small muted" style="margin-top:6px">Pago no mês: <b>'+money(pago)+'</b> · Falta pagar: <b>'+money(falta)+'</b></div>' : '')
+    + '</div>';
   h += '<div class="grid">'
     + '<div class="stat"><div class="l">Investido em CDB</div><div class="v">'+money(inv.aplicado)+'</div></div>'
     + '<div class="stat"><div class="l">Valor líquido estimado</div><div class="v">'+money(inv.liquido)+'</div></div></div>';
   if(state.invest.length) h += '<div class="note" style="margin:-6px 0 14px">Rendimento líquido estimado até hoje: <b>'+money(inv.ganho)+'</b></div>';
 
-  if(state.gastos.length){
-    var byCat = {}; state.gastos.forEach(function(g){ byCat[g.cat]=(byCat[g.cat]||0)+g.valor; });
+  var ativos = gastosAtivos();
+  if(ativos.length){
+    var byCat = {}; ativos.forEach(function(g){ byCat[g.cat]=(byCat[g.cat]||0)+g.valor; });
     var cats = Object.keys(byCat).sort(function(a,b){return byCat[b]-byCat[a];});
     var max = byCat[cats[0]]||1;
-    h += '<div class="card"><h2>Gastos fixos por categoria</h2>' + cats.map(function(c){
+    h += '<div class="card"><h2>Gastos por categoria</h2>' + cats.map(function(c){
       return '<div class="catrow"><span>'+esc(c)+'</span><div class="bar"><i style="width:'+(byCat[c]/max*100).toFixed(1)+'%"></i></div><b>'+money(byCat[c])+'</b></div>';
     }).join("") + '</div>';
 
     var now = new Date(), d0 = now.getDate();
     var lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-    var list = state.gastos.map(function(g){
-      var dd = Math.min(g.dia, lastDay), diff = dd - d0;
-      if(diff<0){ var nl = new Date(now.getFullYear(), now.getMonth()+2, 0).getDate(); diff = (lastDay-d0) + Math.min(g.dia,nl); }
-      return { g:g, diff:diff };
+    var list = ativos.filter(function(g){ return !isPago(g); }).map(function(g){
+      return { g:g, diff:Math.min(g.dia,lastDay) - d0 };
     }).sort(function(a,b){return a.diff-b.diff;}).slice(0,5);
-    h += '<div class="card"><h2>Próximos vencimentos</h2>' + list.map(function(x){
-      var lbl = x.diff===0?"hoje":x.diff===1?"amanhã":"em "+x.diff+" dias";
-      return '<div class="next"><span>'+esc(x.g.nome)+' <span class="pill'+(x.diff<=3?" soon":"")+'">dia '+x.g.dia+' · '+lbl+'</span></span><b>'+money(x.g.valor)+'</b></div>';
-    }).join("") + '</div>';
+    if(list.length){
+      h += '<div class="card"><h2>A pagar neste mês</h2>' + list.map(function(x){
+        var inf = gastoInfo(x.g);
+        var nome = esc(x.g.nome) + (inf.total ? ' '+inf.atual+'/'+inf.total : '');
+        var lbl = x.diff<0?"venceu dia "+x.g.dia : x.diff===0?"vence hoje" : x.diff===1?"vence amanhã" : "vence dia "+x.g.dia+" · em "+x.diff+" dias";
+        return '<div class="next"><span>'+nome+' <span class="pill'+(x.diff<=3?" soon":"")+'">'+lbl+'</span></span><b>'+money(x.g.valor)+'</b></div>';
+      }).join("") + '</div>';
+    }
   }
   h += '<div class="card"><h2>Seus dados</h2><div class="small muted" style="margin-bottom:10px">Salvos na sua conta e sincronizados entre computador e iPhone. Funciona offline e sincroniza quando a internet voltar.</div><div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-act="export">Baixar backup</button><button class="btn ghost" data-act="logout">Sair da conta</button></div></div>';
-return h;
+  return h;
 }
 
 function vRenda(){
@@ -412,13 +459,27 @@ function vRenda(){
 }
 
 function vGastos(){
-  var list = state.gastos.slice().sort(function(a,b){return a.dia-b.dia;});
-  var h = '<div class="toolbar"><h2>Gastos fixos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
+  var list = state.gastos.slice().sort(function(a,b){
+    var ia=gastoInfo(a).ativo, ib=gastoInfo(b).ativo;
+    if(ia!==ib) return ia?-1:1;
+    return a.dia-b.dia;
+  });
+  var h = '<div class="toolbar"><h2>Gastos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
   h += list.length ? list.map(function(g){
-    return '<div class="row"><div class="t"><b>'+esc(g.nome)+'</b><span>'+esc(g.cat)+' · vence dia '+g.dia+'</span></div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
-  }).join("") : '<div class="empty">Cadastre aluguel, internet, mensalidades e outros gastos que se repetem todo mês.</div>';
-  h += '</div><div class="grid"><div class="stat"><div class="l">Total por mês</div><div class="v">'+money(gastosTotal())+'</div></div>'
-     + '<div class="stat"><div class="l">Sobra após os fixos</div><div class="v">'+money(rendaTotal()-gastosTotal())+'</div></div></div>';
+    var inf = gastoInfo(g), pg = isPago(g);
+    var meta = [g.forma==="cartao" ? "Cartão de crédito" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
+    if(g.parc==="sim" && g.total>0){
+      meta.push(inf.estado==="ativo" ? "parcela "+inf.atual+"/"+inf.total : inf.estado==="quitado" ? "quitado ("+g.total+"x)" : "começa em "+fmtMes(g.inicio));
+    }
+    return '<div class="row'+(inf.ativo?"":" off")+'"><div class="t"><b>'+esc(g.nome)+'</b><span>'+meta.map(esc).join(" · ")+'</span>'
+      + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago neste mês":"Marcar como pago")+'</button></div>' : '')
+      + '</div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
+  }).join("") : '<div class="empty">Cadastre aluguel, internet, mensalidades, parcelas e faturas de cartão.</div>';
+  var tot=gastosTotal(), pago=gastosPagos();
+  h += '</div><div class="grid"><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(tot)+'</div></div>'
+     + '<div class="stat"><div class="l">Sobra após os gastos</div><div class="v">'+money(rendaTotal()-tot)+'</div></div>'
+     + '<div class="stat"><div class="l">Já pago neste mês</div><div class="v">'+money(pago)+'</div></div>'
+     + '<div class="stat"><div class="l">Falta pagar</div><div class="v">'+money(tot-pago)+'</div></div></div>';
   return h;
 }
 
@@ -463,6 +524,7 @@ document.addEventListener("click", function(ev){
     case "editExtra": editExtra(id); break;
     case "addGasto": editGasto(null); break;
     case "editGasto": editGasto(id); break;
+    case "togglePago": togglePago(id); break;
     case "addInv": editInvest(null); break;
     case "editInv": editInvest(id); break;
     case "delInv": if(confirm("Excluir este CDB?")){ state.invest=state.invest.filter(function(x){return x.id!==id;}); persist(); } break;
