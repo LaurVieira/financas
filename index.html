@@ -134,19 +134,19 @@ form.f .actions{position:sticky;bottom:0;background:var(--surface);padding:10px 
 <dialog id="dlg"></dialog>
 <div id="auth"><form class="box" id="authForm">
   <h2>Minhas Finanças</h2>
-  <div class="hint">Entre com a sua conta para ver e sincronizar seus dados.</div>
+  <div class="hint">Entre na sua conta.</div>
   <label class="fl">E-mail<input type="email" id="aEmail" autocomplete="username" required></label>
   <label class="fl">Senha<input type="password" id="aPass" autocomplete="current-password" minlength="6" required></label>
   <div class="msg" id="aMsg"></div>
   <button class="btn block" type="submit">Entrar</button>
-  <button class="btn ghost block" type="button" id="aSignup">Criar conta (só na primeira vez)</button>
+  <button class="btn ghost block" type="button" id="aSignup">Criar conta</button>
 </form></div>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
 <script>
 "use strict";
-var VERSAO = "v6";
+var VERSAO = "v9";
 var CATS = ["Moradia","Contas","Transporte","Alimentação","Saúde","Educação","Assinaturas","Dívidas","Outros"];
 var DEFAULT = { v:1, renda:{ salario:0, dia:5, extras:[] }, gastos:[], invest:[], cdi:13.65, inicioApp:"" };
 var state = clone(DEFAULT);
@@ -164,7 +164,15 @@ function todayISO(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMo
 function dayDiff(a,b){ var x=a.split("-").map(Number), y=b.split("-").map(Number); return Math.round((Date.UTC(y[0],y[1]-1,y[2])-Date.UTC(x[0],x[1]-1,x[2]))/86400000); }
 function fmtDate(iso){ if(!iso) return "—"; var p=iso.split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 
-function rendaTotal(){ return state.renda.salario + state.renda.extras.reduce(function(s,e){return s+e.valor;},0); }
+function extraInfo(e){
+  if(!e.mes0) return { ativo:true };
+  var p=e.mes0.split("-").map(Number), idx=(view.y-p[0])*12+(view.m-p[1])+1;
+  if(idx<1) return { ativo:false };
+  if(e.tipo!=="salario" && idx>1) return { ativo:false };
+  return { ativo:true };
+}
+function extrasAtivas(){ return state.renda.extras.filter(function(e){ return extraInfo(e).ativo; }); }
+function rendaTotal(){ return state.renda.salario + extrasAtivas().reduce(function(s,e){return s+e.valor;},0); }
 var view = (function(){ var d=new Date(); return { y:d.getFullYear(), m:d.getMonth()+1 }; })();
 function ymNow(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
 function ymIni(){ var t=(state.inicioApp||ymNow()).split("-").map(Number); return t[0]*12+t[1]; }
@@ -176,7 +184,7 @@ function shiftMes(n){ if(n<0 && !podeVoltar()) return; var d=new Date(view.y,vie
 function monthNav(){
   return '<div class="mesnav"><button class="mesbtn" data-act="mesPrev" aria-label="Mês anterior"'+(podeVoltar()?'':' disabled')+'>‹</button>'
     + '<b>'+mesLabel()+'</b>'
-    + (mesAtual() ? '' : '<button class="chk" data-act="mesHoje">Mês atual</button>')
+    + (mesAtual() ? '' : '<button class="chk" data-act="mesHoje">Hoje</button>')
     + '<button class="mesbtn" data-act="mesNext" aria-label="Próximo mês">›</button></div>';
 }
 function diasAte(g){
@@ -212,20 +220,30 @@ function isPago(g){ return !!(g.pagos && g.pagos[ymKey()]); }
 function gastosTotal(){ return gastosAtivos().reduce(function(s,g){return s+g.valor;},0); }
 function gastosPagos(){ return gastosAtivos().filter(isPago).reduce(function(s,g){return s+g.valor;},0); }
 function aliquotaIR(dias){ return dias<=180?0.225 : dias<=360?0.20 : dias<=720?0.175 : 0.15; }
+function calcDate(){
+  if(mesAtual()) return todayISO();
+  var last = new Date(view.y, view.m, 0).getDate();
+  return view.y+"-"+String(view.m).padStart(2,"0")+"-"+String(last).padStart(2,"0");
+}
 function calcInv(i){
-  var dias = Math.max(0, dayDiff(i.data, todayISO()));
+  var ate = calcDate();
+  var r = { ativo:false, dias:0, anual:0, bruto:0, ganho:0, ir:0, liquido:0, aliq:0 };
+  if(!i.data || i.data > ate) return r;
+  var fim = (i.venc && i.venc < ate) ? i.venc : ate;
+  var dias = Math.max(0, dayDiff(i.data, fim));
   var anual = i.tipo==="cdi" ? (state.cdi/100)*(i.taxa/100) : (i.taxa/100);
   var bruto = i.valor*Math.pow(1+anual, dias/365);
-  var ganho = bruto - i.valor;
-  var ir = ganho*aliquotaIR(dias);
-  return { dias:dias, anual:anual, bruto:bruto, ganho:ganho, ir:ir, liquido:bruto-ir, aliq:aliquotaIR(dias) };
+  var ganho = bruto - i.valor, aliq = aliquotaIR(dias), ir = ganho*aliq;
+  return { ativo:true, dias:dias, anual:anual, bruto:bruto, ganho:ganho, ir:ir, liquido:bruto-ir, aliq:aliq };
 }
 function investTotais(){
-  var ap=0, liq=0, ganho=0;
-  state.invest.forEach(function(i){ var c=calcInv(i); ap+=i.valor; liq+=c.liquido; ganho+=c.liquido-i.valor; });
-  return { aplicado:ap, liquido:liq, ganho:ganho };
+  var t = { aplicado:0, bruto:0, liquido:0, ganho:0 };
+  state.invest.forEach(function(i){
+    var c = calcInv(i); if(!c.ativo) return;
+    t.aplicado += i.valor; t.bruto += c.bruto; t.liquido += c.liquido; t.ganho += c.liquido - i.valor;
+  });
+  return t;
 }
-
 var LS = "fin:v2";
 var sb = null, session = null;
 var store = { timer:null, saving:false, dirty:false, pendingRemote:null };
@@ -247,6 +265,7 @@ function normalize(s){
   d.cdi = +s.cdi || d.cdi;
   d.inicioApp = s.inicioApp || ((d.gastos.length || d.invest.length || d.renda.salario) ? "2026-10" : ymNow());
   d.gastos.forEach(function(g){ if(!mesBase(g)){ g.mes0 = d.inicioApp; g.rep = "nao"; } });
+  d.renda.extras.forEach(function(e){ if(!e.mes0){ e.mes0 = d.inicioApp; e.tipo = "outras"; } });
   return d;
 }
 function persist(){
@@ -263,7 +282,7 @@ async function flush(){
   try{
     var r = await sb.from("financas").upsert({ user_id:session.user.id, data:state, updated_at:new Date().toISOString() });
     if(r.error) throw r.error;
-  }catch(e){ failed = true; store.dirty = true; setSync("off","Sem conexão: salvo no aparelho"); }
+  }catch(e){ failed = true; store.dirty = true; setSync("off","Sem conexão"); }
   localSave();
   store.saving = false;
   if(!failed){ if(store.dirty) flush(); else setSync("ok","Sincronizado"); }
@@ -284,27 +303,27 @@ async function pull(){
       if(dialogOpen()) store.pendingRemote = r.data.data; else applyRemote(r.data.data);
       setSync("ok","Sincronizado");
     } else { store.dirty = true; flush(); }
-  }catch(e){ setSync("off","Offline: usando dados do aparelho"); }
+  }catch(e){ setSync("off","Offline"); }
 }
 
 function authMsg(t, ok){ var m=document.getElementById("aMsg"); m.textContent=t||""; m.className="msg"+(ok?" ok":""); }
 function updateAuthUI(){ document.getElementById("auth").classList.toggle("on", !session); }
 async function doAuth(signup){
-  if(!sb){ authMsg("Configure o arquivo config.js primeiro."); return; }
+  if(!sb){ authMsg("Preencha o config.js."); return; }
   var email=document.getElementById("aEmail").value.trim(), pass=document.getElementById("aPass").value;
-  if(!email || pass.length<6){ authMsg("Informe e-mail e uma senha de pelo menos 6 caracteres."); return; }
+  if(!email || pass.length<6){ authMsg("Digite e-mail e senha (mínimo 6)."); return; }
   authMsg("Aguarde…", true);
   try{
     var r = signup ? await sb.auth.signUp({email:email,password:pass}) : await sb.auth.signInWithPassword({email:email,password:pass});
     if(r.error){ authMsg(r.error.message==="Invalid login credentials" ? "E-mail ou senha incorretos." : r.error.message); return; }
-    if(signup && !r.data.session){ authMsg("Conta criada. Confirme pelo e-mail que você recebeu e depois toque em Entrar.", true); return; }
+    if(signup && !r.data.session){ authMsg("Conta criada. Confirme no e-mail e entre.", true); return; }
     authMsg("");
   }catch(e){ authMsg("Sem conexão. Tente de novo."); }
 }
 document.getElementById("authForm").addEventListener("submit", function(ev){ ev.preventDefault(); doAuth(false); });
 document.getElementById("aSignup").addEventListener("click", function(){ doAuth(true); });
 async function logout(){
-  if(!confirm("Sair da conta? Os dados continuam salvos na nuvem.")) return;
+  if(!confirm("Sair da conta?")) return;
   try{ await sb.auth.signOut(); }catch(e){}
   try{ localStorage.removeItem(LS); }catch(e){}
   state = clone(DEFAULT); store.dirty=false; session=null; updateAuthUI(); render();
@@ -354,16 +373,31 @@ function openForm(opt){
 
 function editSalario(){
   openForm({ title:"Salário", values:{ salario:state.renda.salario, dia:state.renda.dia },
-    fields:[ {k:"salario",label:"Salário líquido mensal (R$)",type:"money",blank0:true,ph:"0,00"}, {k:"dia",label:"Dia do mês em que cai",type:"int"} ],
+    fields:[ {k:"salario",label:"Salário (R$)",type:"money",blank0:true,ph:"0,00"}, {k:"dia",label:"Dia do pagamento",type:"int"} ],
     validate:function(o){ if(o.dia<1||o.dia>31) return "Informe um dia entre 1 e 31."; },
     onSave:function(o){ state.renda.salario=o.salario; state.renda.dia=o.dia; persist(); } });
 }
 function editExtra(id){
-  var it = state.renda.extras.find(function(e){return e.id===id;}) || {nome:"",valor:0};
-  openForm({ title:id?"Editar renda extra":"Nova renda extra", values:it,
-    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Freelance"}, {k:"valor",label:"Valor mensal (R$)",type:"money",blank0:true} ],
-    validate:function(o){ if(!o.nome) return "Dê um nome."; },
-    onSave:function(o){ if(id){ it.nome=o.nome; it.valor=o.valor; } else state.renda.extras.push({id:uid(),nome:o.nome,valor:o.valor}); persist(); },
+  var it = state.renda.extras.find(function(e){return e.id===id;}) || {nome:"",valor:0,tipo:"outras"};
+  function pad(n){ return String(n).padStart(2,"0"); }
+  var data = it.data;
+  if(!data){
+    var ym = (id && it.mes0) || (view.y+"-"+pad(view.m));
+    var last = new Date(+ym.slice(0,4), +ym.slice(5,7), 0).getDate();
+    data = ym+"-"+pad(Math.min(new Date().getDate(), last));
+  }
+  var vals = Object.assign({}, it, { data:data });
+  openForm({ title:id?"Editar renda":"Nova renda", values:vals,
+    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Freelance"},
+             {k:"valor",label:"Valor (R$)",type:"money",blank0:true},
+             {k:"tipo",label:"Categoria",type:"select",options:[{v:"outras",l:"Outras"},{v:"salario",l:"Salário"}]},
+             {k:"data",label:"Data",type:"date"} ],
+    validate:function(o){ if(!o.nome) return "Digite o nome."; if(!(o.valor>0)) return "Digite o valor."; if(!o.data) return "Escolha a data."; },
+    onSave:function(o){
+      o.mes0 = o.data.slice(0,7);
+      if(id){ Object.assign(it,o); } else { o.id=uid(); state.renda.extras.push(o); }
+      persist();
+    },
     onDelete:id?function(){ state.renda.extras=state.renda.extras.filter(function(e){return e.id!==id;}); persist(); }:null });
 }
 function editGasto(id){
@@ -380,17 +414,17 @@ function editGasto(id){
   var vals = Object.assign({}, it, { venc:venc });
   openForm({ title:id?"Editar gasto":"Novo gasto", values:vals,
     fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: Aluguel"},
-             {k:"valor",label:"Valor (R$)",type:"money",blank0:true,hint:"Se for parcelado, coloque o valor de cada parcela."},
+             {k:"valor",label:"Valor (R$)",type:"money",blank0:true},
              {k:"cat",label:"Categoria",type:"select",options:CATS},
-             {k:"forma",label:"Forma de pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão de crédito"}]},
-             {k:"venc",label:"Data de vencimento",type:"date",hint:"O gasto aparece no mês desta data. Se for parcelado, use a data da primeira parcela."},
-             {k:"parc",label:"É parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim, parcelado"}]},
-             {k:"total",label:"Número total de parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
-             {k:"rep",label:"Tipo do gasto",type:"select",options:[{v:"nao",l:"Só neste mês (muda de um mês para o outro)"},{v:"sim",l:"Fixo (repete todo mês)"}],dep:{k:"parc",v:"nao"}} ],
+             {k:"forma",label:"Pagamento",type:"select",options:[{v:"outro",l:"Débito, Pix ou boleto"},{v:"cartao",l:"Cartão"}]},
+             {k:"venc",label:"Vencimento",type:"date"},
+             {k:"parc",label:"Parcelado?",type:"select",options:[{v:"nao",l:"Não"},{v:"sim",l:"Sim"}]},
+             {k:"total",label:"Parcelas",type:"int",blank0:true,dep:{k:"parc",v:"sim"}},
+             {k:"rep",label:"Tipo",type:"select",options:[{v:"nao",l:"Variável"},{v:"sim",l:"Fixo"}],dep:{k:"parc",v:"nao"}} ],
     validate:function(o){
-      if(!o.nome) return "Dê um nome.";
-      if(!o.venc) return "Informe a data de vencimento.";
-      if(o.parc==="sim" && !(o.total>=2)) return "Informe o número de parcelas (2 ou mais).";
+      if(!o.nome) return "Digite o nome.";
+      if(!o.venc) return "Escolha o vencimento.";
+      if(o.parc==="sim" && !(o.total>=2)) return "Digite as parcelas (2 ou mais).";
     },
     onSave:function(o){
       o.dia = parseInt(o.venc.split("-")[2], 10);
@@ -411,19 +445,19 @@ function togglePago(id){
 function editInvest(id){
   var it = state.invest.find(function(i){return i.id===id;}) || {nome:"",banco:"",valor:0,data:todayISO(),tipo:"cdi",taxa:100,venc:""};
   openForm({ title:id?"Editar CDB":"Novo CDB", values:it,
-    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: CDB Banco X"}, {k:"banco",label:"Banco ou corretora (opcional)",type:"text"},
-             {k:"valor",label:"Valor aplicado (R$)",type:"money",blank0:true}, {k:"data",label:"Data da aplicação",type:"date"},
-             {k:"tipo",label:"Tipo de rentabilidade",type:"select",options:[{v:"cdi",l:"Pós-fixado (% do CDI)"},{v:"pre",l:"Prefixado (% ao ano)"}]},
-             {k:"taxa",label:"Taxa (número)",type:"dec",hint:"Pós-fixado: ex. 100 para 100% do CDI. Prefixado: ex. 13,5 para 13,5% ao ano."},
+    fields:[ {k:"nome",label:"Nome",type:"text",ph:"Ex.: CDB Banco X"}, {k:"banco",label:"Banco (opcional)",type:"text"},
+             {k:"valor",label:"Valor (R$)",type:"money",blank0:true}, {k:"data",label:"Data",type:"date"},
+             {k:"tipo",label:"Rentabilidade",type:"select",options:[{v:"cdi",l:"% do CDI"},{v:"pre",l:"Prefixado (% ao ano)"}]},
+             {k:"taxa",label:"Taxa (%)",type:"dec"},
              {k:"venc",label:"Vencimento (opcional)",type:"date"} ],
-    validate:function(o){ if(!o.nome) return "Dê um nome."; if(!(o.valor>0)) return "Informe o valor aplicado."; if(!o.data) return "Informe a data da aplicação."; if(!(o.taxa>0)) return "Informe a taxa."; },
+    validate:function(o){ if(!o.nome) return "Digite o nome."; if(!(o.valor>0)) return "Digite o valor."; if(!o.data) return "Escolha a data."; if(!(o.taxa>0)) return "Digite a taxa."; },
     onSave:function(o){ if(id){ Object.assign(it,o); } else { o.id=uid(); state.invest.push(o); } persist(); },
     onDelete:id?function(){ state.invest=state.invest.filter(function(i){return i.id!==id;}); persist(); }:null });
 }
 function editCDI(){
   openForm({ title:"CDI atual", values:{cdi:state.cdi},
-    fields:[ {k:"cdi",label:"CDI (% ao ano)",type:"dec",hint:"Confira a taxa atual no site do Banco Central ou da sua corretora e atualize aqui de vez em quando."} ],
-    validate:function(o){ if(!(o.cdi>0)) return "Informe um valor válido."; },
+    fields:[ {k:"cdi",label:"CDI (% ao ano)",type:"dec"} ],
+    validate:function(o){ if(!(o.cdi>0)) return "Valor inválido."; },
     onSave:function(o){ state.cdi=o.cdi; persist(); } });
 }
 function exportar(){
@@ -455,18 +489,19 @@ function vResumo(){
   var pct = renda>0 ? Math.min(100, gastos/renda*100) : 0;
   var pago=gastosPagos(), falta=gastos-pago;
   var h = monthNav() + '<div class="grid">'
-    + '<div class="stat big"><div class="l">Sobra do mês (renda − gastos)</div><div class="v">'+money(sobra)+'</div></div>'
-    + '<div class="stat"><div class="l">Renda mensal</div><div class="v">'+money(renda)+'</div></div>'
-    + '<div class="stat"><div class="l">Gastos do mês</div><div class="v">'+money(gastos)+'</div></div>'
+    + '<div class="stat big"><div class="l">Sobra do mês</div><div class="v">'+money(sobra)+'</div></div>'
+    + '<div class="stat"><div class="l">Renda</div><div class="v">'+money(renda)+'</div></div>'
+    + '<div class="stat"><div class="l">Gastos</div><div class="v">'+money(gastos)+'</div></div>'
     + '</div>';
-  h += '<div class="card"><h2>Quanto da renda está comprometido</h2><div class="bar'+(pct>80?" warn":"")+'"><i style="width:'+pct.toFixed(1)+'%"></i></div>'
-    + '<div class="small muted">'+(renda>0? pct.toFixed(0)+"% da renda vai para gastos" : "Cadastre seu salário na aba Renda")+'</div>'
-    + (gastos>0 ? '<div class="small muted" style="margin-top:6px">Pago no mês: <b>'+money(pago)+'</b> · Falta pagar: <b>'+money(falta)+'</b></div>' : '')
+  h += '<div class="card"><h2>Renda usada</h2><div class="bar'+(pct>80?" warn":"")+'"><i style="width:'+pct.toFixed(1)+'%"></i></div>'
+    + '<div class="small muted">'+(renda>0? pct.toFixed(0)+"% da renda em gastos" : "Cadastre seu salário em Renda")+'</div>'
+    + (gastos>0 ? '<div class="small muted" style="margin-top:6px">Pago: <b>'+money(pago)+'</b> · A pagar: <b>'+money(falta)+'</b></div>' : '')
     + '</div>';
   h += '<div class="grid">'
     + '<div class="stat"><div class="l">Investido em CDB</div><div class="v">'+money(inv.aplicado)+'</div></div>'
-    + '<div class="stat"><div class="l">Valor líquido estimado</div><div class="v">'+money(inv.liquido)+'</div></div></div>';
-  if(state.invest.length) h += '<div class="note" style="margin:-6px 0 14px">Rendimento líquido estimado até hoje: <b>'+money(inv.ganho)+'</b></div>';
+    + '<div class="stat"><div class="l">Valor bruto</div><div class="v">'+money(inv.bruto)+'</div></div>'
+    + '<div class="stat"><div class="l">Valor líquido</div><div class="v">'+money(inv.liquido)+'</div></div>'
+    + '<div class="stat"><div class="l">Rendimento líquido</div><div class="v">'+money(inv.ganho)+'</div></div></div>';
 
   var ativos = gastosAtivos();
   if(ativos.length){
@@ -481,27 +516,28 @@ function vResumo(){
       return { g:g, diff:diasAte(g) };
     }).sort(function(a,b){return a.diff-b.diff;}).slice(0,5);
     if(list.length){
-      h += '<div class="card"><h2>'+(mesAtual() ? "A pagar neste mês" : "A pagar em "+mesLabel())+'</h2>' + list.map(function(x){
+      h += '<div class="card"><h2>'+(mesAtual() ? "A pagar" : "A pagar em "+mesLabel())+'</h2>' + list.map(function(x){
         var inf = gastoInfo(x.g);
         var nome = esc(x.g.nome) + (inf.total ? ' '+inf.atual+'/'+inf.total : '');
-        var lbl = x.diff<0 ? "venceu dia "+x.g.dia : x.diff===0 ? "vence hoje" : x.diff===1 ? "vence amanhã" : "vence dia "+x.g.dia+(x.diff<=31 ? " · em "+x.diff+" dias" : "");
+        var lbl = x.diff<0 ? "venceu dia "+x.g.dia : x.diff===0 ? "hoje" : x.diff===1 ? "amanhã" : "dia "+x.g.dia+(x.diff<=31 ? " · em "+x.diff+" dias" : "");
         return '<div class="next"><span>'+nome+' <span class="pill'+(x.diff<=3?" soon":"")+'">'+lbl+'</span></span><b>'+money(x.g.valor)+'</b></div>';
       }).join("") + '</div>';
     }
   }
-  h += '<div class="card"><h2>Seus dados</h2><div class="small muted" style="margin-bottom:10px">Salvos na sua conta e sincronizados entre computador e iPhone. Funciona offline e sincroniza quando a internet voltar.</div><div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-act="export">Baixar backup</button><button class="btn ghost" data-act="logout">Sair da conta</button></div><div class="note" style="margin-top:10px">Versão do app: '+VERSAO+'</div></div>';
+  h += '<div class="card"><h2>Seus dados</h2><div class="small muted" style="margin-bottom:10px">Salvo na sua conta. Funciona offline.</div><div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-act="export">Backup</button><button class="btn ghost" data-act="logout">Sair</button></div><div class="note" style="margin-top:10px">Versão '+VERSAO+'</div></div>';
   return h;
 }
 
 function vRenda(){
-  var s=state.renda;
-  var h = '<div class="toolbar"><h2>Renda</h2></div>';
-  h += '<div class="card"><div class="row"><div class="t"><b>Salário líquido</b><span>'+(s.salario>0?"cai todo dia "+s.dia:"ainda não cadastrado")+'</span></div><div class="amt">'+money(s.salario)+'</div><button class="ed" data-act="salario" aria-label="Editar salário">'+ICONS.edit+'</button></div></div>';
-  h += '<div class="toolbar"><h2 style="font-size:15px;color:var(--muted)">Rendas extras</h2><button class="btn" data-act="addExtra">+ Adicionar</button></div><div class="card">';
-  h += s.extras.length ? s.extras.map(function(e){
-    return '<div class="row"><div class="t"><b>'+esc(e.nome)+'</b></div><div class="amt">'+money(e.valor)+'</div><button class="ed" data-act="editExtra" data-id="'+e.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
-  }).join("") : '<div class="empty">Nenhuma renda extra cadastrada.</div>';
-  h += '</div><div class="stat"><div class="l">Renda mensal total</div><div class="v">'+money(rendaTotal())+'</div></div>';
+  var s=state.renda, extras=extrasAtivas();
+  var h = monthNav() + '<div class="toolbar"><h2>Renda</h2></div>';
+  h += '<div class="card"><div class="row"><div class="t"><b>Salário</b><span>'+(s.salario>0?"dia "+s.dia+" · todo mês":"não cadastrado")+'</span></div><div class="amt">'+money(s.salario)+'</div><button class="ed" data-act="salario" aria-label="Editar salário">'+ICONS.edit+'</button></div></div>';
+  h += '<div class="toolbar"><h2 style="font-size:15px;color:var(--muted)">Outras rendas</h2><button class="btn" data-act="addExtra">+ Adicionar</button></div><div class="card">';
+  h += extras.length ? extras.map(function(e){
+    var meta = e.tipo==="salario" ? "Salário · todo mês" : "Outras" + (e.data ? " · "+fmtDate(e.data) : "");
+    return '<div class="row"><div class="t"><b>'+esc(e.nome)+'</b><span>'+esc(meta)+'</span></div><div class="amt">'+money(e.valor)+'</div><button class="ed" data-act="editExtra" data-id="'+e.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
+  }).join("") : '<div class="empty">Nenhuma renda neste mês.</div>';
+  h += '</div><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(rendaTotal())+'</div></div>';
   return h;
 }
 
@@ -510,43 +546,52 @@ function vGastos(){
   var h = monthNav() + '<div class="toolbar"><h2>Gastos</h2><button class="btn" data-act="addGasto">+ Adicionar</button></div><div class="card">';
   h += list.length ? list.map(function(g){
     var inf = gastoInfo(g), pg = isPago(g);
-    var meta = [g.forma==="cartao" ? "Cartão de crédito" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
+    var meta = [g.forma==="cartao" ? "Cartão" : "Débito, Pix ou boleto", g.cat, "vence dia "+g.dia];
     if(g.parc==="sim" && g.total>0){ meta.push("parcela "+inf.atual+"/"+inf.total); }
     else if(g.rep==="sim"){ meta.push("fixo"); }
     return '<div class="row'+(inf.ativo?"":" off")+'"><div class="t"><b>'+esc(g.nome)+'</b><span>'+meta.map(esc).join(" · ")+'</span>'
-      + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago":"Marcar como pago")+'</button></div>' : '')
+      + (inf.ativo ? '<div style="margin-top:6px"><button class="chk'+(pg?" on":"")+'" data-act="togglePago" data-id="'+g.id+'">'+(pg?"✓ Pago":"Marcar pago")+'</button></div>' : '')
       + '</div><div class="amt">'+money(g.valor)+'</div><button class="ed" data-act="editGasto" data-id="'+g.id+'" aria-label="Editar">'+ICONS.edit+'</button></div>';
-  }).join("") : '<div class="empty">'+(state.gastos.length ? "Nenhum gasto neste mês." : "Cadastre aluguel, internet, mensalidades, parcelas e faturas de cartão.")+'</div>';
+  }).join("") : '<div class="empty">'+(state.gastos.length ? "Nenhum gasto neste mês." : "Nenhum gasto cadastrado.")+'</div>';
   var tot=gastosTotal(), pago=gastosPagos();
   h += '</div><div class="grid"><div class="stat"><div class="l">Total do mês</div><div class="v">'+money(tot)+'</div></div>'
-     + '<div class="stat"><div class="l">Sobra após os gastos</div><div class="v">'+money(rendaTotal()-tot)+'</div></div>'
-     + '<div class="stat"><div class="l">Já pago no mês</div><div class="v">'+money(pago)+'</div></div>'
-     + '<div class="stat"><div class="l">Falta pagar</div><div class="v">'+money(tot-pago)+'</div></div></div>';
+     + '<div class="stat"><div class="l">Sobra</div><div class="v">'+money(rendaTotal()-tot)+'</div></div>'
+     + '<div class="stat"><div class="l">Pago</div><div class="v">'+money(pago)+'</div></div>'
+     + '<div class="stat"><div class="l">A pagar</div><div class="v">'+money(tot-pago)+'</div></div></div>';
   return h;
 }
 
 function vInvest(){
   var t = investTotais();
-  var h = '<div class="toolbar"><h2>Investimentos em CDB</h2><button class="btn" data-act="addInv">+ Adicionar</button></div>';
-  h += '<div class="grid"><div class="stat"><div class="l">Total aplicado</div><div class="v">'+money(t.aplicado)+'</div></div>'
-     + '<div class="stat"><div class="l">Líquido estimado hoje</div><div class="v">'+money(t.liquido)+'</div></div></div>';
-  h += '<div class="card"><div class="row"><div class="t"><b>CDI usado nos cálculos</b><span>'+fmtNum(state.cdi)+'% ao ano · atualize quando mudar</span></div><button class="ed" data-act="cdi" aria-label="Editar CDI">'+ICONS.edit+'</button></div></div>';
+  var h = monthNav() + '<div class="toolbar"><h2>CDB</h2><button class="btn" data-act="addInv">+ Adicionar</button></div>';
+  h += '<div class="grid">'
+     + '<div class="stat"><div class="l">Aplicado</div><div class="v">'+money(t.aplicado)+'</div></div>'
+     + '<div class="stat"><div class="l">Valor bruto</div><div class="v">'+money(t.bruto)+'</div></div>'
+     + '<div class="stat"><div class="l">Valor líquido</div><div class="v">'+money(t.liquido)+'</div></div>'
+     + '<div class="stat"><div class="l">Rendimento</div><div class="v">'+money(t.ganho)+'</div></div></div>';
+  h += '<div class="card"><div class="row"><div class="t"><b>CDI</b><span>'+fmtNum(state.cdi)+'% ao ano</span></div><button class="ed" data-act="cdi" aria-label="Editar CDI">'+ICONS.edit+'</button></div></div>';
   h += '<div class="card">';
   h += state.invest.length ? state.invest.map(function(i){
     var c = calcInv(i);
     var venc = i.venc ? dayDiff(todayISO(), i.venc) : null;
     var taxaTxt = i.tipo==="cdi" ? fmtNum(i.taxa)+"% do CDI" : fmtNum(i.taxa)+"% a.a. (prefixado)";
-    return '<div class="inv"><div class="top"><div><b>'+esc(i.nome)+'</b><div class="small muted">'+esc(i.banco||"")+(i.banco?" · ":"")+taxaTxt+'</div></div>'
-      + '<div style="display:flex;gap:2px"><button class="ed" data-act="editInv" data-id="'+i.id+'" aria-label="Editar">'+ICONS.edit+'</button><button class="ed" data-act="delInv" data-id="'+i.id+'" aria-label="Excluir">'+ICONS.trash+'</button></div></div>'
+    var head = '<div class="top"><div><b>'+esc(i.nome)+'</b><div class="small muted">'+esc(i.banco||"")+(i.banco?" · ":"")+taxaTxt+'</div></div>'
+      + '<div style="display:flex;gap:2px"><button class="ed" data-act="editInv" data-id="'+i.id+'" aria-label="Editar">'+ICONS.edit+'</button><button class="ed" data-act="delInv" data-id="'+i.id+'" aria-label="Excluir">'+ICONS.trash+'</button></div></div>';
+    if(!c.ativo){
+      return '<div class="inv" style="opacity:.55">'+head+'<div style="margin-top:10px"><span class="tag w">começa em '+fmtDate(i.data)+'</span></div></div>';
+    }
+    return '<div class="inv">'+head
       + '<div class="kv"><div><span>Aplicado em '+fmtDate(i.data)+'</span>'+money(i.valor)+'</div>'
-      + '<div><span>Líquido estimado</span><b>'+money(c.liquido)+'</b></div>'
+      + '<div><span>Valor bruto</span>'+money(c.bruto)+'</div>'
       + '<div><span>Rendimento bruto</span>'+money(c.ganho)+'</div>'
-      + '<div><span>IR estimado ('+(c.aliq*100).toFixed(1).replace(".",",")+'%)</span>'+money(c.ir)+'</div></div>'
-      + '<div style="margin-top:10px"><span class="tag">'+c.dias+' dias aplicado</span> '
+      + '<div><span>IR ('+(c.aliq*100).toFixed(1).replace(".",",")+'%)</span>'+money(c.ir)+'</div>'
+      + '<div><span>Valor líquido</span><b>'+money(c.liquido)+'</b></div>'
+      + '<div><span>Rendimento líquido</span>'+money(c.liquido-i.valor)+'</div></div>'
+      + '<div style="margin-top:10px"><span class="tag">'+c.dias+' dias</span> '
       + (venc!==null ? (venc>=0 ? '<span class="tag'+(venc<=30?" w":"")+'">vence em '+venc+' dias</span>' : '<span class="tag w">venceu em '+fmtDate(i.venc)+'</span>') : '')
       + '</div></div>';
-  }).join("") : '<div class="empty">Adicione seus CDBs para acompanhar quanto já renderam.</div>';
-  h += '</div><div class="note">Estimativa simples: juros compostos por dias corridos e IR regressivo (22,5% até 180 dias, 20% até 360, 17,5% até 720, 15% depois). Não considera IOF dos primeiros 30 dias nem variações diárias do CDI. O valor oficial é o que aparece no app do seu banco.</div>';
+  }).join("") : '<div class="empty">Nenhum CDB cadastrado.</div>';
+  h += '</div><div class="note">Valores estimados até hoje (ou até o fim do mês escolhido), com IR regressivo. O valor oficial é o do seu banco.</div>';
   return h;
 }
 
@@ -585,7 +630,7 @@ async function boot(){
   render();
   var cfg = window.APP_CONFIG || {};
   var ok = window.supabase && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && cfg.SUPABASE_URL.indexOf("http")===0;
-  if(!ok){ setSync("off","Falta configurar"); document.getElementById("auth").classList.add("on"); authMsg(window.supabase ? "Preencha o arquivo config.js com os dados do Supabase." : "Sem internet para carregar o app pela primeira vez."); return; }
+  if(!ok){ setSync("off","Falta configurar"); document.getElementById("auth").classList.add("on"); authMsg(window.supabase ? "Preencha o config.js." : "Sem internet."); return; }
   sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, { auth:{ persistSession:true, autoRefreshToken:true } });
   sb.auth.onAuthStateChange(function(ev, s){ var had=!!session; session=s; updateAuthUI(); if(s && !had) pull(); });
   var r = await sb.auth.getSession(); session = r.data.session; updateAuthUI();
